@@ -1,0 +1,2020 @@
+import json
+import hashlib
+import tkinter as tk
+import tkinter as ttk
+from tkinter import messagebox
+from tkinter import filedialog
+from tkinter import ttk
+import os
+
+# Constants
+USERS_FILE = "users.json"
+DEFAULT_THEME = "Light"
+THEMES = {
+    "Light": {
+        "bg": "#f9f9f9",
+        "fg": "#333333",
+        "button_bg": "#4CAF50",
+        "button_fg": "#ffffff",
+        "header_fg": "#000000",
+    },
+    "Dark": {
+        "bg": "#2b2b2b",
+        "fg": "#e0e0e0",
+        "button_bg": "#1e90ff",
+        "button_fg": "#ffffff",
+        "header_fg": "#ffffff",
+    }
+}
+
+
+DEPARTMENTS_FILE = "departments.json"
+
+def load_departments():
+    """
+    Load departments and doctors from the JSON file. If not found, return an empty structure.
+    """
+    try:
+        with open(DEPARTMENTS_FILE, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}  # Return empty if no departments exist
+
+DEPARTMENTS = load_departments()
+
+# Load or initialize user accounts
+def load_users():
+    try:
+        with open(USERS_FILE, "r") as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+users = load_users()
+print("Loaded users:", users)  # Debug print
+
+
+def save_users(users):
+    try:
+        with open(USERS_FILE, "w") as file:
+            json.dump(users, file, indent=4)
+    except Exception as e:
+        print(f"Error saving users: {e}")
+
+# Hash passwords for secure storage
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# Global variables
+users = load_users()
+current_user = None  # Tracks the currently logged-in user
+current_department = None  # Tracks the current department (for doctors)
+current_theme = THEMES[DEFAULT_THEME]
+current_language = "en"  # Default language
+localized_text = {}  # Placeholder for localized text
+# Supported languages
+available_languages = ["en", "es"]  # Add more languages as needed
+current_language_index = 0  # Start with the first language (English by default)
+current_language = available_languages[current_language_index]  # Sync with the language index
+
+
+# UI Functions
+def reset_frame():
+    """
+    Clears all widgets in the frame and resets grid configurations.
+    """
+    for widget in frame.winfo_children():
+        widget.destroy()  # Remove all widgets
+
+    # Reset grid weights to defaults
+    for i in range(5):  # Assuming max 5 rows
+        frame.grid_rowconfigure(i, weight=0)
+    for i in range(3):  # Assuming max 3 columns
+        frame.grid_columnconfigure(i, weight=0)
+    frame.grid_rowconfigure(0, weight=1)  # Center-align row 0
+    frame.grid_columnconfigure(0, weight=1)  # Center-align column 0
+
+def apply_theme(theme_name):
+    global current_theme
+    current_theme = THEMES[theme_name]
+    root.configure(bg=current_theme["bg"])
+    frame.configure(bg=current_theme["bg"])
+    show_main_menu()
+
+def toggle_theme(refresh_function=None):
+    new_theme = "Dark" if current_theme == THEMES["Light"] else "Light"
+    apply_theme(new_theme)
+    if refresh_function:
+        refresh_function() 
+    
+def book_appointment(department, doctor):
+    """
+    Collect patient details and allow optional upload of medical history before confirming the booking.
+    """
+    reset_frame()
+
+    # Patient input fields
+    tk.Label(
+        frame,
+        text="Enter Patient Details",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    tk.Label(frame, text="Patient Name:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=1, column=0, sticky="e", padx=10)
+    name_entry = tk.Entry(frame, font=("Arial", 14))
+    name_entry.grid(row=1, column=1, sticky="ew", padx=10)
+
+    tk.Label(frame, text="Age:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=2, column=0, sticky="e", padx=10)
+    age_entry = tk.Entry(frame, font=("Arial", 14))
+    age_entry.grid(row=2, column=1, sticky="ew", padx=10)
+
+    tk.Label(frame, text="Contact:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=3, column=0, sticky="e", padx=10)
+    contact_entry = tk.Entry(frame, font=("Arial", 14))
+    contact_entry.grid(row=3, column=1, sticky="ew", padx=10)
+
+    # Medical history upload section
+    tk.Label(frame, text="Upload Medical History (Optional):", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=4, column=0, sticky="e", padx=10)
+
+    selected_file_label = tk.Label(frame, text="No file selected", bg=current_theme["bg"], fg=current_theme["fg"])
+    selected_file_label.grid(row=4, column=1, sticky="w", padx=10)
+
+    def upload_file():
+        file_path = tk.filedialog.askopenfilename(title="Select File")
+        if file_path:
+            selected_file_label.config(text=f"Selected: {os.path.basename(file_path)}")
+
+    tk.Button(
+        frame,
+        text="Browse",
+        font=("Arial", 12),
+        bg="#4CAF50",
+        fg="#ffffff",
+        command=upload_file,
+    ).grid(row=4, column=1, sticky="e", padx=10)
+
+    # Confirm booking
+    def confirm_booking():
+        patient_name = name_entry.get().strip()
+        age = age_entry.get().strip()
+        contact = contact_entry.get().strip()
+        medical_file = selected_file_label.cget("text").replace("Selected: ", "")
+
+        if not patient_name or not age or not contact:
+            messagebox.showerror("Error", "Please fill all fields.")
+            return
+
+        # Check if the file is selected or skipped
+        medical_file_status = "Uploaded" if medical_file != "No file selected" else "Skipped"
+
+        # Validate doctor availability
+        doctor_info = next((d for d in DEPARTMENTS[department] if d["name"] == doctor), None)
+        if not doctor_info or not doctor_info.get("available", False):
+            messagebox.showerror("Error", f"Dr. {doctor} is not available for booking.")
+            return
+
+        # Save booking details linked to the logged-in user
+        booking_details = {
+            "username": current_user,  # Link the booking to the current logged-in user
+            "patient_name": patient_name,
+            "age": age,
+            "contact": contact,
+            "department": department,
+            "doctor": doctor,
+            "timing": doctor_info.get("timing", "N/A"),
+            "medical_file": medical_file if medical_file_status == "Uploaded" else None,
+            "medical_file_status": medical_file_status,
+        }
+
+        save_booking_to_file(booking_details)
+
+        # Display confirmation details on the same slide
+        reset_frame()
+
+        tk.Label(
+            frame,
+            text="Booking Confirmed!",
+            font=("Arial", 24, "bold"),
+            bg=current_theme["bg"],
+            fg=current_theme["header_fg"],
+        ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+        tk.Label(frame, text=f"Patient Name: {patient_name}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=1, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Age: {age}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=2, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Contact: {contact}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=3, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Department: {department}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=4, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Doctor: Dr. {doctor}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=5, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Timing: {doctor_info.get('timing', 'N/A')}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=6, column=0, sticky="w", padx=20)
+        tk.Label(frame, text=f"Medical History: {medical_file_status}", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=7, column=0, sticky="w", padx=20)
+
+        create_rounded_button(frame, "Back 🔙", show_main_menu, bg_color="#ff4500", row=8)
+
+    # Buttons for confirming or going back
+    create_rounded_button(frame, "Confirm Booking", confirm_booking, row=5)
+    create_rounded_button(frame, "Back 🔙", show_departments, bg_color="#ff4500", row=6)
+
+
+def save_booking_to_file(booking_details):
+    """
+    Save booking details to a JSON file.
+    """
+    file_name = "bookings.json"
+    bookings = []
+
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                bookings = json.load(file)
+            except json.JSONDecodeError:
+                bookings = []
+
+    bookings.append(booking_details)
+
+    with open(file_name, "w") as file:
+        json.dump(bookings, file, indent=4)
+
+def show_booking_confirmation(booking_details):
+    """
+    Display booking confirmation details.
+    """
+    reset_frame()
+
+    # Display Booking Confirmation
+    tk.Label(
+        frame,
+        text="Booking Confirmation",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    tk.Label(
+        frame,
+        text=f"Patient Name: {booking_details['patient_name']}",
+        font=("Arial", 18),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=1, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    tk.Label(
+        frame,
+        text=f"Department: {booking_details['department']}",
+        font=("Arial", 18),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=2, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    tk.Label(
+        frame,
+        text=f"Doctor: {booking_details['doctor']}",
+        font=("Arial", 18),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=3, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    tk.Label(
+        frame,
+        text=f"Timing: {booking_details['timing']}",
+        font=("Arial", 18),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=4, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    create_rounded_button(frame, "Back 🔙", show_departments, bg_color="#ff4500", row=5)
+    
+
+
+def show_bookings(filter_by_user=False, filter_by_doctor=False, back_callback=None, success_message=None):
+    """
+    Display bookings saved in the bookings.json file.
+    If filter_by_user is True, display only bookings for the current logged-in user.
+    If filter_by_doctor is True, display only bookings for the current logged-in doctor.
+    Optionally, display a success message for actions like canceling a booking.
+    """
+    reset_frame()
+
+    # Create a canvas for scrollable content
+    canvas = tk.Canvas(frame, bg=current_theme["bg"])
+    canvas.grid(row=0, column=0, sticky="nsew", rowspan=5)
+
+    scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    content_frame = tk.Frame(canvas, bg=current_theme["bg"])
+    canvas.create_window((0, 0), window=content_frame, anchor="nw")
+
+    # Display optional success message
+    if success_message:
+        tk.Label(
+            content_frame,
+            text=success_message,
+            font=("Arial", 12, "bold"),
+            fg="green",
+            bg=current_theme["bg"],
+        ).grid(row=0, column=0, columnspan=4, pady=10, padx=20, sticky="n")
+
+    tk.Label(
+        content_frame,
+        text="My Appointments" if filter_by_user else "All Bookings",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=1, column=0, columnspan=4, pady=20, padx=20, sticky="n")
+
+    file_name = "bookings.json"
+    row = 2  # Adjust row indexing after the success message and header
+
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                bookings = json.load(file)
+            except json.JSONDecodeError:
+                bookings = []
+
+        # Filter bookings based on the user or doctor
+        if filter_by_user:
+            bookings = [b for b in bookings if b.get("username") == current_user]
+        elif filter_by_doctor:
+            bookings = [b for b in bookings if b.get("doctor") == current_user]
+
+        if bookings:
+            for booking in bookings:
+                details = f"Patient: {booking['patient_name']}, Doctor: {booking['doctor']}, Department: {booking['department']}, Timing: {booking['timing']}"
+                tk.Label(
+                    content_frame,
+                    text=details,
+                    bg=current_theme["bg"],
+                    fg=current_theme["fg"],
+                ).grid(row=row, column=0, columnspan=3, pady=10, padx=20, sticky="w")
+
+                tk.Button(
+                    content_frame,
+                    text="Cancel",
+                    font=("Arial", 12),
+                    bg="#ff4500",
+                    fg="#ffffff",
+                    command=lambda b=booking: cancel_booking(b, back_callback),
+                ).grid(row=row, column=3, padx=10, pady=5, sticky="ew")
+
+                row += 1
+        else:
+            tk.Label(
+                content_frame,
+                text="No bookings available.",
+                bg=current_theme["bg"],
+                fg=current_theme["fg"],
+            ).grid(row=row, column=0, columnspan=4, pady=10, padx=20, sticky="n")
+            row += 1
+    else:
+        tk.Label(
+            content_frame,
+            text="No bookings available.",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=4, pady=10, padx=20, sticky="n")
+        row += 1
+
+    # Back Button
+    if back_callback is None:
+        back_callback = show_main_menu if not filter_by_user else show_admin_panel
+
+    create_rounded_button(content_frame, "Back 🔙", back_callback, bg_color="#ff4500", row=row)
+
+    # Update scroll region
+    content_frame.update_idletasks()
+    canvas.config(scrollregion=canvas.bbox("all"))
+
+    # Bind the canvas resizing to the frame size
+    def resize_canvas(event):
+        canvas.config(scrollregion=canvas.bbox("all"))
+
+    canvas.bind("<Configure>", resize_canvas)
+
+
+def cancel_booking(booking_to_cancel, back_callback):
+    """
+    Cancel the selected booking after user confirmation and update the UI.
+    """
+    reset_frame()
+
+    # Ask for confirmation
+    tk.Label(
+        frame,
+        text="Do you want to cancel this appointment?",
+        font=("Arial", 16, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    booking_details = f"Patient: {booking_to_cancel['patient_name']}, Doctor: {booking_to_cancel['doctor']}, Timing: {booking_to_cancel['timing']}"
+    tk.Label(
+        frame,
+        text=booking_details,
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+        font=("Arial", 12),
+    ).grid(row=1, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    def confirm_cancel():
+        """
+        Perform cancellation and show success message.
+        """
+        # Remove booking from the file
+        file_name = "bookings.json"
+        if os.path.exists(file_name):
+            with open(file_name, "r") as file:
+                try:
+                    bookings = json.load(file)
+                except json.JSONDecodeError:
+                    bookings = []
+
+            updated_bookings = [b for b in bookings if b != booking_to_cancel]
+            with open(file_name, "w") as file:
+                json.dump(updated_bookings, file, indent=4)
+
+        # Refresh the slide with success message
+        reset_frame()
+        tk.Label(
+            frame,
+            text="Appointment canceled successfully!",
+            font=("Arial", 16, "bold"),
+            fg="green",
+            bg=current_theme["bg"],
+        ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+        # Back button to the appropriate menu
+        create_rounded_button(frame, "Back 🔙", back_callback, bg_color="#ff4500", row=1)
+
+    def cancel_action():
+        """
+        Go back to the previous slide without canceling the appointment.
+        """
+        show_bookings(filter_by_user=False, filter_by_doctor=False, back_callback=back_callback)
+
+    # Buttons for confirmation
+    create_rounded_button(frame, "Yes, Cancel", confirm_cancel, row=2, bg_color="#ff4500")
+    create_rounded_button(frame, "No, Go Back", cancel_action, row=3, bg_color="#32cd32")
+
+
+def create_rounded_button(parent, text, command, row, bg_color=None, fg_color=None, colspan=1):
+    button = tk.Button(
+        parent,
+        text=text,
+        command=command,
+        font=("Arial", 14, "bold"),
+        bg=bg_color or current_theme["button_bg"],
+        fg=fg_color or current_theme["button_fg"],
+        activebackground="#3c8d40",
+        activeforeground="white",
+        relief="flat",
+        bd=0,
+        padx=20,
+        pady=10,
+    )
+    button.grid(row=row, column=0, columnspan=colspan, pady=10, padx=20, sticky="ew")
+    button.bind("<Enter>", lambda e: button.config(bg="#45a049"))
+    button.bind("<Leave>", lambda e: button.config(bg=bg_color or current_theme["button_bg"]))
+    return button
+
+def show_hospital_info():
+    reset_frame()
+    tk.Label(
+        frame,
+        text="Hospital Details",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    hospital_info = [
+        ("Hospital Name", "ABC Hospital"),
+        ("Phone Number", "(123) 456-7890"),
+        ("Address", "123 Health St., Wellness City"),
+        ("Specialties", "Cardiology, Neurology, Pediatrics, Orthopedics, Emergency"),
+    ]
+
+    row = 1
+    for label, value in hospital_info:
+        tk.Label(frame, text=label, bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=row, column=0, pady=5, sticky="w")
+        tk.Label(frame, text=value, bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=row, column=1, pady=5, sticky="w")
+        row += 1
+
+    create_rounded_button(frame, "Back 🔙", show_main_menu, bg_color="#ff4500", row=row)
+
+def view_doctor_profile(doctor, back_callback):
+    """
+    View the profile of a doctor.
+    """
+    reset_frame()
+
+    # Check if `doctor` is a string (name); fetch details if necessary
+    if isinstance(doctor, str):
+        print("DEBUG: doctor is a string, fetching details from DEPARTMENTS")
+        found_doctor = None
+        for department, doctors in DEPARTMENTS.items():
+            found_doctor = next((d for d in doctors if d.get("name") == doctor), None)
+            if found_doctor:
+                doctor = found_doctor
+                break
+        if not found_doctor:
+            print("DEBUG: Doctor not found in DEPARTMENTS")
+            tk.Label(
+                frame,
+                text="Doctor profile not found.",
+                font=("Arial", 16, "bold"),
+                bg=current_theme["bg"],
+                fg="red",
+            ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+            create_rounded_button(frame, "Back 🔙", back_callback, bg_color="#ff4500", row=1)
+            return
+
+    print("DEBUG: Doctor object passed =", doctor)
+
+    # Profile Header
+    tk.Label(
+        frame,
+        text=f"Dr. {doctor['name']}'s Profile",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    file_name = "doctor_profiles.json"
+
+    # Load profiles from the file
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                profiles = json.load(file)
+                if isinstance(profiles, list):  # Convert legacy list format to dictionary
+                    profiles = {p["name"]: p for p in profiles if isinstance(p, dict) and "name" in p}
+                print("DEBUG: Loaded doctor_profiles.json =", profiles)
+            except json.JSONDecodeError:
+                profiles = {}
+    else:
+        profiles = {}
+
+    # Ensure profiles is a dictionary and fetch the profile
+    if isinstance(profiles, dict):
+        profile = profiles.get(doctor["name"], None)
+    else:
+        profile = None
+
+    if profile:
+        row = 1
+        details = {
+            "Name": profile.get("name", "N/A"),
+            "Age": profile.get("age", "N/A"),
+            "Department": profile.get("department", "N/A"),
+            "Availability": profile.get("availability", "N/A"),
+        }
+
+        for key, value in details.items():
+            tk.Label(
+                frame,
+                text=f"{key}: {value}",
+                bg=current_theme["bg"],
+                fg=current_theme["fg"],
+            ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20, pady=5)
+            row += 1
+    else:
+        tk.Label(
+            frame,
+            text="Profile not found.",
+            font=("Arial", 14),
+            bg=current_theme["bg"],
+            fg="red",
+        ).grid(row=1, column=0, columnspan=2, sticky="nsew", padx=20)
+
+    create_rounded_button(frame, "Back 🔙", back_callback, bg_color="#ff4500", row=row)
+
+
+def toggle_language(refresh_function=None):
+    global current_language_index, current_language
+    current_language_index = (current_language_index + 1) % len(available_languages)
+    current_language = available_languages[current_language_index]
+    apply_language(current_language, refresh_function)
+
+
+def create_toggle_language_switch(parent, row, refresh_function):
+    """
+    Create a rounded button to toggle the application language and refresh the specified UI.
+    """
+    create_rounded_button(
+        parent,
+        text="Change Language 🌍",
+        command=lambda: toggle_language(refresh_function),
+        row=row
+    )
+
+
+def apply_language(language, refresh_function=None):
+    """
+    Update the UI text based on the selected language and refresh the current screen.
+    """
+    # Translation dictionary
+    translations = {
+    "en": {
+        "welcome": "Welcome!",
+        "view_info": "View Hospital Info 🔍",
+        "view_depts": "View Departments 🏥",
+        "view_appts": "View Appointments 🗓️",
+        "hospital_name": "Hospital Name:",
+        "phone_number": "Phone Number:",
+        "departments": "Departments",
+        "manage_doctors": "Manage Doctors 🩺",
+        "manage_depts": "Manage Departments 🏥",
+        "analyze_trends": "Analyze Trends 📊",
+        "logout": "Logout 🚪",
+        "change_language": "Change Language 🌍",
+        "profile": "Profile 🧑‍⚕️",
+        "patient_profile": "Patient Profile",
+        "full_name": "Full Name:",
+        "age": "Age:",
+        "dob": "Date of Birth (DD-MM-YYYY):",
+        "phone": "Phone Number:",
+        "notes": "Additional Notes (Optional):",
+        "save_profile": "Save Profile 💾",
+        "back": "Back 🔙",
+        "profile_saved": "Profile saved successfully!",
+        "your_profile": "Your Profile",
+        "no_profile_data": "No profile data found.",
+    },
+    
+    "es": {
+        "welcome": "¡Bienvenido!",
+        "view_info": "Ver información del hospital 🔍",
+        "view_depts": "Ver departamentos 🏥",
+        "view_appts": "Ver citas 🗓️",
+        "hospital_name": "Nombre del hospital:",
+        "phone_number": "Número de teléfono:",
+        "departments": "Departamentos",
+        "manage_doctors": "Administrar médicos 🩺",
+        "manage_depts": "Administrar departamentos 🏥",
+        "analyze_trends": "Analizar tendencias 📊",
+        "logout": "Cerrar sesión 🚪",
+        "change_language": "Cambiar idioma 🌍",
+        "profile": "Perfil 🧑‍⚕️",
+        "patient_profile": "Perfil del paciente",
+        "full_name": "Nombre completo:",
+        "age": "Edad:",
+        "dob": "Fecha de nacimiento (DD-MM-AAAA):",
+        "phone": "Número de teléfono:",
+        "notes": "Notas adicionales (Opcional):",
+        "save_profile": "Guardar perfil 💾",
+        "back": "Atrás 🔙",
+        "profile_saved": "¡Perfil guardado con éxito!",
+        "your_profile": "Tu perfil",
+        "no_profile_data": "No se encontraron datos del perfil.",
+    },
+}
+
+
+    # Access global localized_text to update language
+    global localized_text
+    localized_text = translations.get(language, translations["en"])  # Default to English
+
+    # Refresh the current screen using the specified function or default to main menu
+    if refresh_function:
+        refresh_function()
+    else:
+        show_main_menu()
+
+def show_admin_panel():
+    """
+    Display the admin panel menu.
+    """
+    reset_frame()
+
+    tk.Label(
+        frame,
+        text=localized_text.get("welcome", "Welcome!"),  # Fallback to "Welcome!" if key is missing
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # Buttons with localized text
+    create_rounded_button(frame, localized_text.get("manage_doctors", "Manage Doctors 🩺"), manage_doctors, row=1)
+    create_rounded_button(frame, localized_text.get("manage_depts", "Manage Departments🏥"), manage_departments, row=2)
+    create_rounded_button(
+        frame,
+        localized_text.get("view_appts", "View Appointments🗓"),
+        lambda: show_bookings(filter_by_user=False, back_callback=show_admin_panel),
+        row=3,
+    )
+    create_rounded_button(frame, localized_text.get("analyze_trends", "Analyze Trends📊"), analyze_trends, row=4)
+
+    # Add Change Language button
+    create_toggle_language_switch(frame, row=5, refresh_function=show_admin_panel)
+
+    # Add Logout button
+    create_rounded_button(frame, localized_text.get("logout", "Logout"), handle_logout, bg_color="#ff4500", row=6)
+
+    # Add Toggle Theme Button at the bottom-left corner
+    create_toggle_theme_switch(frame, row=7, refresh_function=show_admin_panel)
+
+    
+def save_departments():
+    """
+    Save the current state of departments and doctors to a JSON file.
+    """
+    try:
+        with open("departments.json", "w") as file:
+            json.dump(DEPARTMENTS, file, indent=4)
+    except Exception as e:
+        print(f"Error saving departments: {e}")  
+
+def manage_departments():
+    """
+    Allow the admin to add new departments and manage doctors with proper timing dropdowns.
+    """
+    reset_frame()
+
+    tk.Label(
+        frame,
+        text="Manage Departments and Doctors",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # Department Name Entry
+    tk.Label(frame, text="Department Name:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=1, column=0, sticky="e", padx=10)
+    department_name_entry = tk.Entry(frame, font=("Arial", 14))
+    department_name_entry.grid(row=1, column=1, pady=10, padx=10, sticky="ew")
+
+    # Save Department Button
+    def save_department():
+        """
+        Save a new department after confirmation.
+        """
+        department_name = department_name_entry.get().strip()
+
+        # Validation
+        if not department_name:
+            confirmation_label.config(text="Error: Department name is required!", fg="red")
+            return
+        if department_name in DEPARTMENTS:
+            confirmation_label.config(text=f"Error: Department '{department_name}' already exists!", fg="red")
+            return
+
+        # Show confirmation message
+        confirmation_label.config(
+            text=f"Confirm adding department '{department_name}'?",
+            fg="blue",
+        )
+
+        def confirm_department():
+            # Add department and refresh
+            DEPARTMENTS[department_name] = []
+            save_departments()
+            confirmation_label.config(text=f"Department '{department_name}' added successfully!", fg="green")
+            manage_departments()
+
+        # Confirmation Buttons
+        tk.Button(frame, text="Yes ✅", command=confirm_department, bg="#32cd32", fg="white").grid(row=3, column=0, pady=5, sticky="e", padx=10)
+        tk.Button(frame, text="No ❌", command=manage_departments, bg="#ff4500", fg="white").grid(row=3, column=1, pady=5, sticky="w", padx=10)
+
+
+    def delete_department():
+        """
+        Show a dropdown to select and delete an existing department.
+        """
+        reset_frame()
+
+        tk.Label(
+            frame,
+            text="Delete Department",
+            font=("Arial", 24, "bold"),
+            bg=current_theme["bg"],
+            fg=current_theme["header_fg"],
+        ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+        tk.Label(
+            frame,
+            text="Select Department to Delete:",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=1, column=0, padx=10, sticky="ew")
+
+        # Dropdown for existing departments
+        dept_var = tk.StringVar()
+        dept_dropdown = ttk.Combobox(frame, textvariable=dept_var, values=list(DEPARTMENTS.keys()), state="readonly", font=("Arial", 12))
+        dept_dropdown.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
+
+        def confirm_deletion():
+            """
+            Perform deletion of the selected department after confirmation.
+            """
+            department = dept_var.get().strip()
+
+            if not department:
+                confirmation_label.config(text="Error: No department selected.", fg="red")
+                return
+
+            # Confirmation message
+            confirmation_label.config(
+                text=f"Are you sure you want to delete the department '{department}'?",
+                fg="blue",
+            )
+
+            def perform_deletion():
+                """
+                Delete the department and update all necessary views.
+                """
+                if department in DEPARTMENTS:
+                    del DEPARTMENTS[department]
+                    save_departments()  # Save changes to the data file
+
+                    # Update confirmation label and refresh UI
+                    confirmation_label.config(text=f"Department '{department}' deleted successfully!", fg="green")
+                    manage_departments()
+
+            # Add Confirmation Buttons
+            tk.Button(frame, text="Yes ✅", command=perform_deletion, bg="#32cd32", fg="white").grid(row=3, column=0, padx=10, pady=5, sticky="e")
+            tk.Button(frame, text="No ❌", command=manage_departments, bg="#ff4500", fg="white").grid(row=3, column=1, padx=10, pady=5, sticky="w")
+
+        create_rounded_button(
+            frame,
+            text="Delete",
+            command=confirm_deletion,
+            row=4,
+            bg_color="#ff4500",
+            fg_color="#ffffff",
+        )
+
+        # Label to display confirmation or error messages
+        confirmation_label = tk.Label(frame, text="", font=("Arial", 12), bg=current_theme["bg"], fg="blue")
+        confirmation_label.grid(row=2, column=0, columnspan=2, pady=10)
+
+        # Back Button
+        create_rounded_button(frame, "Back 🔙", manage_departments, bg_color="#ff4500", row=5)
+
+
+    # Define the frame to hold Save and Delete Department buttons
+    button_frame = tk.Frame(frame, bg=current_theme["bg"])
+    button_frame.grid(row=2, column=0, columnspan=2, pady=10, sticky="ew")
+
+    # Save Department Button
+    create_rounded_button(button_frame, "Save Department", save_department, row=0).grid(
+        row=0, column=0, padx=10, sticky="e"
+    )
+
+    # Delete Department Button
+    create_rounded_button(button_frame, "Delete Department", delete_department, row=0).grid(
+        row=0, column=1, padx=10, sticky="w"
+    )
+
+    # Confirmation Label
+    confirmation_label = tk.Label(frame, text="", font=("Arial", 12), bg=current_theme["bg"], fg="blue")
+    confirmation_label.grid(row=3, column=0, columnspan=2, pady=10)
+
+    # Section to Add Doctors to Departments
+    tk.Label(frame, text="Add Doctor to Department:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=4, column=0, columnspan=2, pady=10)
+
+    # Doctor's Name
+    tk.Label(frame, text="Doctor Name:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=5, column=0, sticky="e", padx=10)
+    doctor_name_entry = tk.Entry(frame, font=("Arial", 14))
+    doctor_name_entry.grid(row=5, column=1, pady=10, padx=10, sticky="ew")
+
+    # Doctor's Age
+    tk.Label(frame, text="Doctor Age:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=6, column=0, sticky="e", padx=10)
+    doctor_age_entry = tk.Entry(frame, font=("Arial", 14))
+    doctor_age_entry.grid(row=6, column=1, pady=10, padx=10, sticky="ew")
+
+    # Department Dropdown
+    tk.Label(frame, text="Department:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=7, column=0, sticky="e", padx=10)
+    dept_var = tk.StringVar()
+    dept_dropdown = ttk.Combobox(frame, textvariable=dept_var, font=("Arial", 14), state="readonly")
+    dept_dropdown["values"] = list(DEPARTMENTS.keys())  # Populate with existing departments
+    dept_dropdown.grid(row=7, column=1, pady=10, padx=10, sticky="ew")
+
+    # Doctor Timing Dropdowns
+    tk.Label(frame, text="Timing:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=8, column=0, sticky="e", padx=10)
+
+    hour_start_var = tk.StringVar(value="9")
+    am_pm_start_var = tk.StringVar(value="AM")
+    hour_end_var = tk.StringVar(value="5")
+    am_pm_end_var = tk.StringVar(value="PM")
+
+    hours = [str(i) for i in range(1, 13)]
+    am_pm_options = ["AM", "PM"]
+
+    start_hour_dropdown = ttk.Combobox(frame, textvariable=hour_start_var, values=hours, font=("Arial", 12), state="readonly", width=4)
+    start_hour_dropdown.grid(row=8, column=1, sticky="w", padx=5)
+
+    start_am_pm_dropdown = ttk.Combobox(frame, textvariable=am_pm_start_var, values=am_pm_options, font=("Arial", 12), state="readonly", width=4)
+    start_am_pm_dropdown.grid(row=8, column=1, padx=(60, 10), sticky="w")
+
+    tk.Label(frame, text="-", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=8, column=1, sticky="ew", padx=(120, 10))
+
+    end_hour_dropdown = ttk.Combobox(frame, textvariable=hour_end_var, values=hours, font=("Arial", 12), state="readonly", width=4)
+    end_hour_dropdown.grid(row=8, column=1, padx=(180, 10), sticky="w")
+
+    end_am_pm_dropdown = ttk.Combobox(frame, textvariable=am_pm_end_var, values=am_pm_options, font=("Arial", 12), state="readonly", width=4)
+    end_am_pm_dropdown.grid(row=8, column=1, padx=(240, 10), sticky="w")
+
+    # Doctor Password
+    tk.Label(frame, text="Password:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=9, column=0, sticky="e", padx=10)
+    doctor_password_entry = tk.Entry(frame, font=("Arial", 14), show="*")
+    doctor_password_entry.grid(row=9, column=1, pady=10, padx=10, sticky="ew")
+
+    # Save Doctor Button
+    def save_doctor():
+        """
+        Save a new doctor after confirmation.
+        """
+        doctor_name = doctor_name_entry.get().strip()
+        doctor_age = doctor_age_entry.get().strip()
+        department = dept_var.get().strip()
+        timing_start = f"{hour_start_var.get()} {am_pm_start_var.get()}"
+        timing_end = f"{hour_end_var.get()} {am_pm_end_var.get()}"
+        doctor_password = doctor_password_entry.get().strip()
+
+        if not (doctor_name and doctor_age and department and doctor_password):
+            confirmation_label.config(text="Error: All fields are required!", fg="red")
+            return
+
+        if department not in DEPARTMENTS:
+            confirmation_label.config(text=f"Error: Department '{department}' does not exist!", fg="red")
+            return
+
+        # Show confirmation message
+        confirmation_label.config(
+            text=f"Confirm adding doctor '{doctor_name}'?",
+            fg="blue",
+        )
+
+        def confirm_doctor():
+            # Add the doctor to DEPARTMENTS
+            DEPARTMENTS[department].append(
+                {"name": doctor_name, "timing": f"{timing_start} - {timing_end}", "password": hash_password(doctor_password)}
+            )
+            save_departments()
+
+            # Save doctor profile for "View Profile"
+            doctor_profile = {
+                "name": doctor_name,
+                "age": doctor_age,
+                "department": department,
+                "availability": f"{timing_start} - {timing_end}",
+            }
+
+            file_name = "doctor_profiles.json"
+
+            # Ensure profiles are stored as a dictionary
+            if os.path.exists(file_name):
+                with open(file_name, "r") as file:
+                    try:
+                        profiles = json.load(file)
+                        if isinstance(profiles, list):  # Convert legacy list format to dictionary
+                            profiles = {p["name"]: p for p in profiles if isinstance(p, dict) and "name" in p}
+                    except json.JSONDecodeError:
+                        profiles = {}
+            else:
+                profiles = {}
+
+            # Add or update the doctor's profile
+            profiles[doctor_name] = doctor_profile
+
+            with open(file_name, "w") as file:
+                 json.dump(profiles, file, indent=4)
+
+            confirmation_label.config(text=f"Doctor '{doctor_name}' added successfully!", fg="green")
+            manage_departments()
+
+        # Confirmation Buttons
+        tk.Button(frame, text="Yes ✅", command=confirm_doctor, bg="#32cd32", fg="white").grid(row=3, column=0, pady=5, sticky="e", padx=10)
+        tk.Button(frame, text="No ❌", command=manage_departments, bg="#ff4500", fg="white").grid(row=3, column=1, pady=5, sticky="w", padx=10)
+
+    # Define the frame to hold Save and Delete Department buttons
+    button_frame1 = tk.Frame(frame, bg=current_theme["bg"])
+    button_frame1.grid(row=11, column=0, columnspan=2, pady=10, sticky="ew")
+
+    create_rounded_button(button_frame1, "Save Doctor", save_doctor, row=11).grid(
+        row=11, column=0, padx=10, sticky="e"
+    )
+    
+    # Back Button
+    create_rounded_button(button_frame1, "Back 🔙", show_admin_panel, bg_color="#ff4500", row=11).grid(
+        row=11, column=1, padx=10, sticky="w"
+    )
+
+def manage_doctors():
+    """
+    Manage doctors, view profiles, and delete doctors.
+    """
+    reset_frame()
+
+    # Header
+    tk.Label(
+        frame,
+        text="Manage Doctors",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="n")
+
+    # Create a scrollable view
+    canvas = tk.Canvas(frame, bg=current_theme["bg"])
+    canvas.grid(row=1, column=0, sticky="nsew", columnspan=2)
+    scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+    scrollbar.grid(row=1, column=2, sticky="ns")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    content_frame = tk.Frame(canvas, bg=current_theme["bg"])
+    canvas.create_window((0, 0), window=content_frame, anchor="nw")
+
+    # Update scrollable content grid
+    frame.grid_rowconfigure(1, weight=1)  # Scrollable area
+    frame.grid_columnconfigure(0, weight=1)  # Center-align column
+
+    # List doctors department-wise
+    row = 0
+    for department, doctors in DEPARTMENTS.items():
+        # Department Header
+        tk.Label(
+            content_frame,
+            text=f"Department: {department}",
+            font=("Arial", 18, "bold"),
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=3, pady=10, sticky="w")
+        row += 1
+
+        for doctor in doctors:
+            # Safely construct doctor information with default values for missing keys
+            doctor_name = doctor.get("name", "Unknown")
+            doctor_timing = doctor.get("timing", "Not Set")
+            doctor_available = doctor.get("available", False)
+
+            doctor_info = f"Dr. {doctor_name} - {doctor_timing} ({'Available' if doctor_available else 'Not Available'})"
+            
+            # Doctor Info Label
+            tk.Label(
+                content_frame,
+                text=doctor_info,
+                bg=current_theme["bg"],
+                fg=current_theme["fg"],
+            ).grid(row=row, column=0, padx=20, pady=5, sticky="w")
+
+            # View Profile Button
+            tk.Button(
+                content_frame,
+                text="View Profile",
+                font=("Arial", 12),
+                bg="#1e90ff",
+                fg="#ffffff",
+                command=lambda d=doctor: view_doctor_profile(d, manage_doctors),
+            ).grid(row=row, column=1, padx=10, pady=5, sticky="ew")
+
+            # Delete Doctor Button
+            tk.Button(
+                content_frame,
+                text="Delete",
+                font=("Arial", 12),
+                bg="#ff4500",
+                fg="#ffffff",
+                command=lambda dep=department, dn=doctor_name: delete_doctor(dep, dn),
+            ).grid(row=row, column=2, padx=10, pady=5, sticky="ew")
+
+            row += 1
+
+    # Update scroll region to match the content size dynamically
+    content_frame.update_idletasks()
+    canvas.config(scrollregion=canvas.bbox("all"))
+
+    # Back Button
+    create_rounded_button(frame, "Back 🔙", show_admin_panel, bg_color="#ff4500", row=3)
+
+
+def delete_doctor(department, doctor_name):
+    """
+    Delete a doctor from a department after confirming the deletion.
+    """
+    reset_frame()  # Clear the frame for the confirmation message
+
+    # Confirmation message
+    tk.Label(
+        frame,
+        text=f"Are you sure you want to delete Dr. {doctor_name} from {department}?",
+        font=("Arial", 16, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    def confirm_delete():
+        """
+        Perform the deletion of the doctor.
+        """
+        if department in DEPARTMENTS:
+            # Remove the doctor from the department
+            DEPARTMENTS[department] = [
+                doc for doc in DEPARTMENTS[department] if doc.get("name") != doctor_name
+            ]
+            save_departments()
+
+            # Delete the doctor's profile
+            file_name = "doctor_profiles.json"
+            if os.path.exists(file_name):
+                with open(file_name, "r") as file:
+                    try:
+                        profiles = json.load(file)
+                        # Ensure profiles is a list of dictionaries
+                        if isinstance(profiles, list):
+                            profiles = [p for p in profiles if isinstance(p, dict)]
+                        else:
+                            profiles = []  # Reset to empty if invalid
+                    except json.JSONDecodeError:
+                        profiles = []  # Handle malformed JSON
+
+                # Remove the doctor's profile
+                profiles = [p for p in profiles if p.get("name") != doctor_name]
+
+                with open(file_name, "w") as file:
+                    json.dump(profiles, file, indent=4)
+
+            # Refresh the UI with a success message
+            reset_frame()
+            tk.Label(
+                frame,
+                text=f"Doctor '{doctor_name}' has been successfully deleted!",
+                font=("Arial", 16, "bold"),
+                bg=current_theme["bg"],
+                fg="green",
+            ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+            create_rounded_button(frame, "Back 🔙", manage_doctors, bg_color="#ff4500", row=1)
+
+    # Cancel Button
+    create_rounded_button(frame, "Cancel ❌", manage_doctors, bg_color="#1e90ff", row=1).grid(
+        row=1, column=0, padx=20, pady=20, sticky="ew"
+    )
+
+    # Confirm Button
+    create_rounded_button(frame, "Delete 🗑️", confirm_delete, bg_color="#ff4500", row=1).grid(
+        row=1, column=1, padx=20, pady=20, sticky="ew"
+    )
+
+
+
+def add_doctor():
+    reset_frame()
+
+    tk.Label(frame, text="Doctor Name:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=0, column=0, pady=10, padx=10, sticky="w")
+    name_entry = tk.Entry(frame)
+    name_entry.grid(row=0, column=1, pady=10, padx=10)
+
+    tk.Label(frame, text="Password:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=1, column=0, pady=10, padx=10, sticky="w")
+    password_entry = tk.Entry(frame, show="*")
+    password_entry.grid(row=1, column=1, pady=10, padx=10)
+
+    def save_doctor():
+        doctor_name = name_entry.get().strip()
+        password = password_entry.get().strip()
+
+        if doctor_name in users:
+            messagebox.showerror("Error", "Doctor already exists!")
+            return
+
+        users[doctor_name] = {"password": hash_password(password), "role": "doctor"}
+        save_users(users)
+        messagebox.showinfo("Success", "Doctor added successfully!")
+        manage_doctors()
+
+    create_rounded_button(frame, "Save Doctor", save_doctor, row=2)
+    create_rounded_button(frame, "Back 🔙", manage_doctors, bg_color="#ff4500", row=3)
+
+def analyze_trends():
+    """
+    Analyze trends based on appointment data.
+    """
+    reset_frame()
+
+    # Header
+    tk.Label(
+        frame,
+        text="Analyze Trends",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    file_name = "bookings.json"
+    trends = {}
+
+    # Read bookings data
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                bookings = json.load(file)
+            except json.JSONDecodeError:
+                bookings = []
+
+        # Count appointments by department
+        for booking in bookings:
+            department = booking.get("department", "Unknown")
+            trends[department] = trends.get(department, 0) + 1
+
+        # Display trends
+        row = 1
+        for department, count in trends.items():
+            tk.Label(
+                frame,
+                text=f"{department}: {count} appointments",
+                bg=current_theme["bg"],
+                fg=current_theme["fg"],
+                anchor="w",
+            ).grid(row=row, column=0, columnspan=2, pady=5, padx=20, sticky="nsew")
+            row += 1
+    else:
+        tk.Label(
+            frame,
+            text="No booking data available to analyze trends.",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=1, column=0, columnspan=2, pady=10, padx=20, sticky="nsew")
+
+    # Back button
+    create_rounded_button(frame, "Back 🔙", show_admin_panel, bg_color="#ff4500", row=row)
+
+
+def show_trends_graph():
+    departments = ["Cardiology", "Neurology", "Pediatrics"]
+    counts = [40, 25, 30]
+
+    plt.bar(departments, counts)
+    plt.title("Appointments by Department")
+    plt.xlabel("Department")
+    plt.ylabel("Number of Appointments")
+    plt.show()
+
+
+def show_doctor_dashboard():
+    reset_frame()
+    tk.Label(
+        frame,
+        text=f"Doctor Dashboard - {current_user}",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # View appointments for the logged-in doctor
+    create_rounded_button(
+        frame,
+        "View Appointments 📅",
+        lambda: show_bookings(filter_by_doctor=True, back_callback=show_doctor_dashboard),
+        row=1,
+    )
+    create_rounded_button(frame, "Update Availability ⏰", update_availability, row=2)
+    create_rounded_button(frame, "Logout 🚪", handle_logout, bg_color="#ff4500", row=3)
+
+    # Add Toggle Theme Button at the bottom-left corner
+    create_toggle_theme_switch(frame, row=7, refresh_function=show_doctor_dashboard)
+
+def update_availability():
+    """
+    Allow the logged-in doctor to update their availability and timing.
+    """
+    reset_frame()
+
+    tk.Label(
+        frame,
+        text="Update Availability & Timing",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # Availability Checkbox
+    availability_var = tk.BooleanVar(value=True)  # Default to available
+    tk.Checkbutton(
+        frame,
+        text="Available",
+        variable=availability_var,
+        onvalue=True,
+        offvalue=False,
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+    ).grid(row=1, column=0, columnspan=2, pady=10, sticky="nsew")
+
+    # Timing Dropdowns
+    tk.Label(frame, text="Timing:", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=2, column=0, sticky="e", padx=10)
+
+    hour_start_var = tk.StringVar(value="9")
+    am_pm_start_var = tk.StringVar(value="AM")
+    hour_end_var = tk.StringVar(value="5")
+    am_pm_end_var = tk.StringVar(value="PM")
+
+    hours = [str(i) for i in range(1, 13)]
+    am_pm_options = ["AM", "PM"]
+
+    start_hour_dropdown = ttk.Combobox(frame, textvariable=hour_start_var, values=hours, font=("Arial", 12), state="readonly", width=4)
+    start_hour_dropdown.grid(row=2, column=1, sticky="w", padx=5)
+
+    start_am_pm_dropdown = ttk.Combobox(frame, textvariable=am_pm_start_var, values=am_pm_options, font=("Arial", 12), state="readonly", width=4)
+    start_am_pm_dropdown.grid(row=2, column=1, padx=(60, 10), sticky="w")
+
+    tk.Label(frame, text="-", bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=2, column=1, sticky="ew", padx=(120, 10))
+
+    end_hour_dropdown = ttk.Combobox(frame, textvariable=hour_end_var, values=hours, font=("Arial", 12), state="readonly", width=4)
+    end_hour_dropdown.grid(row=2, column=1, padx=(180, 10), sticky="w")
+
+    end_am_pm_dropdown = ttk.Combobox(frame, textvariable=am_pm_end_var, values=am_pm_options, font=("Arial", 12), state="readonly", width=4)
+    end_am_pm_dropdown.grid(row=2, column=1, padx=(240, 10), sticky="w")
+
+    def save_availability_and_timing():
+        """
+        Save the updated availability and timing for the doctor.
+        """
+        global current_user, current_department
+
+        # Retrieve the updated values
+        updated_availability = availability_var.get()
+        updated_timing = f"{hour_start_var.get()} {am_pm_start_var.get()} - {hour_end_var.get()} {am_pm_end_var.get()}"
+
+        # Update in DEPARTMENTS
+        doctors = DEPARTMENTS.get(current_department, [])
+        for doctor in doctors:
+            if doctor.get("name") == current_user:
+                doctor["available"] = updated_availability
+                doctor["timing"] = updated_timing
+                save_departments()
+                break
+
+        # Update in doctor_profiles.json
+        profile_file = "doctor_profiles.json"
+        if os.path.exists(profile_file):
+            with open(profile_file, "r") as file:
+                try:
+                    profiles = json.load(file)
+                except json.JSONDecodeError:
+                    profiles = []
+
+            if isinstance(profiles, list):
+                for profile in profiles:
+                    if profile.get("name") == current_user:
+                        profile["availability"] = "Available" if updated_availability else "Not Available"
+                        profile["timing"] = updated_timing
+                        break
+
+                with open(profile_file, "w") as file:
+                    json.dump(profiles, file, indent=4)
+
+        # Refresh the UI with success message
+        reset_frame()
+        tk.Label(
+            frame,
+            text="Availability and timing updated successfully!",
+            font=("Arial", 16, "bold"),
+            bg=current_theme["bg"],
+            fg="green",
+        ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+        create_rounded_button(frame, "Back 🔙", show_doctor_dashboard, bg_color="#ff4500", row=1)
+
+    # Save Button
+    create_rounded_button(frame, "Save Changes", save_availability_and_timing, row=3, bg_color="#32cd32")
+
+    # Back Button
+    create_rounded_button(frame, "Back 🔙", show_doctor_dashboard, bg_color="#ff4500", row=4)
+
+
+def update_doctor_profile(doctor_name, updates):
+    """
+    Update a doctor's profile in doctor_profiles.json with the given updates.
+    Returns True if successful, False otherwise.
+    """
+    file_name = "doctor_profiles.json"
+
+    # Load existing profiles
+    profiles = []
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                profiles = json.load(file)
+            except json.JSONDecodeError:
+                profiles = []
+
+    # Find the profile to update
+    for profile in profiles:
+        if profile["name"] == doctor_name:
+            # Apply updates
+            profile.update(updates)
+            break
+    else:
+        # Doctor profile not found
+        print(f"ERROR: Doctor profile for '{doctor_name}' not found in {file_name}.")
+        return False
+
+    # Save the updated profiles
+    with open(file_name, "w") as file:
+        json.dump(profiles, file, indent=4)
+
+    return True
+
+
+def show_profile_form():
+    """
+    Allow the logged-in patient to enter or edit their profile details.
+    """
+    reset_frame()
+
+    tk.Label(
+        frame,
+        text=localized_text.get("patient_profile", "Patient Profile"),
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    file_name = "patient_profiles.json"
+
+    # Load existing profile details (if any)
+    profile_data = {}
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                all_profiles = json.load(file)
+                profile_data = all_profiles.get(current_user, {})
+            except json.JSONDecodeError:
+                all_profiles = {}
+
+    # Create Entry fields
+    tk.Label(frame, text=localized_text.get("full_name", "Full Name:"), bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=1, column=0, sticky="e", padx=10)
+    name_entry = tk.Entry(frame, font=("Arial", 14))
+    name_entry.grid(row=1, column=1, sticky="ew", padx=10)
+    name_entry.insert(0, profile_data.get("name", ""))
+
+    tk.Label(frame, text=localized_text.get("age", "Age:"), bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=2, column=0, sticky="e", padx=10)
+    age_entry = tk.Entry(frame, font=("Arial", 14))
+    age_entry.grid(row=2, column=1, sticky="ew", padx=10)
+    age_entry.insert(0, profile_data.get("age", ""))
+
+    tk.Label(frame, text=localized_text.get("dob", "Date of Birth (DD-MM-YYYY):"), bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=3, column=0, sticky="e", padx=10)
+    dob_entry = tk.Entry(frame, font=("Arial", 14))
+    dob_entry.grid(row=3, column=1, sticky="ew", padx=10)
+    dob_entry.insert(0, profile_data.get("dob", ""))
+
+    tk.Label(frame, text=localized_text.get("phone", "Phone Number:"), bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=4, column=0, sticky="e", padx=10)
+    phone_entry = tk.Entry(frame, font=("Arial", 14))
+    phone_entry.grid(row=4, column=1, sticky="ew", padx=10)
+    phone_entry.insert(0, profile_data.get("phone", ""))
+
+    tk.Label(frame, text=localized_text.get("notes", "Additional Notes (Optional):"), bg=current_theme["bg"], fg=current_theme["fg"]).grid(row=5, column=0, sticky="e", padx=10)
+    notes_entry = tk.Text(frame, font=("Arial", 12), height=4, width=30)
+    notes_entry.grid(row=5, column=1, pady=10, padx=10, sticky="ew")
+    notes_entry.insert("1.0", profile_data.get("notes", ""))
+
+    def save_profile():
+        """
+        Save the entered profile details for the current user and transition to view mode.
+        """
+        profile = {
+            "name": name_entry.get().strip(),
+            "age": age_entry.get().strip(),
+            "dob": dob_entry.get().strip(),
+            "phone": phone_entry.get().strip(),
+            "notes": notes_entry.get("1.0", "end").strip(),
+        }
+
+        if not profile["name"] or not profile["phone"]:
+            tk.Label(
+                frame,
+                text=localized_text.get("error_message", "Please fill all required fields."),
+                font=("Arial", 12, "bold"),
+                fg="red",
+                bg=current_theme["bg"],
+            ).grid(row=7, column=0, columnspan=2, pady=10)
+            return
+
+        # Save to patient_profiles.json
+        all_profiles = {}
+        if os.path.exists(file_name):
+            with open(file_name, "r") as file:
+                try:
+                    all_profiles = json.load(file)
+                except json.JSONDecodeError:
+                    all_profiles = {}
+
+        all_profiles[current_user] = profile
+
+        with open(file_name, "w") as file:
+            json.dump(all_profiles, file, indent=4)
+
+        # Redirect to view profile mode
+        show_patient_profile()
+
+    # Save Profile Button
+    create_rounded_button(frame, localized_text.get("save_profile", "Save Profile 💾"), save_profile, row=6, bg_color="#32cd32")
+
+    # Back Button
+    create_rounded_button(frame, localized_text.get("back", "Back 🔙"), show_main_menu, bg_color="#ff4500", row=7)
+
+
+def show_patient_profile():
+    """
+    Display the patient's profile details and allow account deletion.
+    """
+    reset_frame()
+
+    tk.Label(
+        frame,
+        text=localized_text.get("your_profile", "Your Profile"),
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    file_name = "patient_profiles.json"
+    profile_data = {}
+
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                all_profiles = json.load(file)
+                profile_data = all_profiles.get(current_user, {})
+            except json.JSONDecodeError:
+                profile_data = {}
+
+    row = 1  # Start row indexing for profile details
+
+    if profile_data:  # Check if profile data exists for the current user
+        # Display profile details
+        tk.Label(
+            frame,
+            text=f"{localized_text.get('full_name', 'Full Name:')} {profile_data.get('name', 'N/A')}",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        row += 1
+
+        tk.Label(
+            frame,
+            text=f"{localized_text.get('age', 'Age:')} {profile_data.get('age', 'N/A')}",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        row += 1
+
+        tk.Label(
+            frame,
+            text=f"{localized_text.get('dob', 'Date of Birth:')} {profile_data.get('dob', 'N/A')}",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        row += 1
+
+        tk.Label(
+            frame,
+            text=f"{localized_text.get('phone', 'Phone Number:')} {profile_data.get('phone', 'N/A')}",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        row += 1
+
+        tk.Label(
+            frame,
+            text=f"{localized_text.get('notes', 'Additional Notes:')} {profile_data.get('notes', 'N/A')}",
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", padx=20)
+        row += 1
+
+        # Add Delete Account Button
+        def delete_account():
+            """
+            Display a confirmation message and delete the account if confirmed.
+            """
+            reset_frame()
+
+            tk.Label(
+                frame,
+                text=localized_text.get("delete_confirm", "Are you sure you want to delete your account?"),
+                font=("Arial", 18, "bold"),
+                bg=current_theme["bg"],
+                fg="red",
+            ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+            def confirm_delete():
+                """
+                Delete the patient's account, profile, and appointments.
+                """
+                global current_user
+
+                # Delete profile
+                if os.path.exists(file_name):
+                    with open(file_name, "r") as file:
+                        all_profiles = json.load(file)
+                    all_profiles.pop(current_user, None)
+                    with open(file_name, "w") as file:
+                        json.dump(all_profiles, file, indent=4)
+
+                # Delete appointments
+                bookings_file = "bookings.json"
+                if os.path.exists(bookings_file):
+                    with open(bookings_file, "r") as file:
+                        bookings = json.load(file)
+                    bookings = [b for b in bookings if b.get("username") != current_user]
+                    with open(bookings_file, "w") as file:
+                        json.dump(bookings, file, indent=4)
+
+                # Delete account
+                users_file = "users.json"
+                if os.path.exists(users_file):
+                    with open(users_file, "r") as file:
+                        all_users = json.load(file)
+                    all_users.pop(current_user, None)
+                    with open(users_file, "w") as file:
+                        json.dump(all_users, file, indent=4)
+
+                current_user = None
+
+                # Show deletion acknowledgment
+                reset_frame()
+                tk.Label(
+                    frame,
+                    text=localized_text.get("account_deleted", "Your account has been deleted successfully."),
+                    font=("Arial", 18, "bold"),
+                    fg="green",
+                    bg=current_theme["bg"],
+                ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+                create_rounded_button(frame, localized_text.get("back", "Back 🔙"), show_main_menu, bg_color="#ff4500", row=1)
+
+            create_rounded_button(frame, localized_text.get("confirm", "Yes ✅"), confirm_delete, bg_color="#32cd32", row=1)
+            create_rounded_button(frame, localized_text.get("cancel", "No ❌"), show_patient_profile, bg_color="#ff4500", row=2)
+
+        create_rounded_button(frame, localized_text.get("delete_account", "Delete Account 🗑️"), delete_account, row=row, bg_color="#ff4500")
+        row += 1
+
+        # Add Edit Profile Button
+        create_rounded_button(frame, localized_text.get("edit_profile", "Edit Profile ✏️"), show_profile_form, row=row, bg_color="#32cd32")
+        row += 1
+
+    else:
+        tk.Label(
+            frame,
+            text=localized_text.get("no_profile_data", "No profile data found."),
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=2, sticky="nsew", padx=20)
+        row += 1
+
+    # Add Back Button
+    create_rounded_button(frame, localized_text.get("back", "Back 🔙"), show_main_menu, bg_color="#ff4500", row=row)
+
+    
+def show_profile_button_logic():
+    """
+    Redirect the user based on whether their profile exists or not.
+    """
+    file_name = "patient_profiles.json"
+
+    # Check if a profile for the current user exists
+    profile_exists = False
+    if os.path.exists(file_name):
+        with open(file_name, "r") as file:
+            try:
+                all_profiles = json.load(file)
+                profile_exists = current_user in all_profiles
+            except json.JSONDecodeError:
+                profile_exists = False
+
+    # Redirect to the appropriate view
+    if profile_exists:
+        show_patient_profile()
+    else:
+        show_profile_form()
+
+
+def show_main_menu():
+    reset_frame()
+
+    # Main Welcome Header
+    tk.Label(
+        frame,
+        text=localized_text.get("welcome", "Welcome!"),
+        font=("Arial", 28, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="n")
+
+    # Logged-in user info
+    if current_user:
+        tk.Label(
+            frame,
+            text=f"Logged in as: {current_user}",
+            font=("Arial", 18),
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=1, column=0, columnspan=2, pady=10, sticky="n")
+
+        # Main Menu Buttons for Logged-in Users
+        create_rounded_button(frame, localized_text.get("view_info", "View Hospital Info 🔍"), show_hospital_info, row=2)
+        create_rounded_button(frame, localized_text.get("view_depts", "View Departments 🏥"), show_departments, row=3)
+        create_rounded_button(frame, localized_text.get("view_appts", "View Appointments 🗓"), 
+                              lambda: show_bookings(filter_by_user=True, back_callback=show_main_menu), row=4)
+        create_rounded_button(frame, localized_text.get("logout", "Logout 🚪"), handle_logout, bg_color="#ff4500", row=5)
+
+        # Add Profile Button for Logged-in Users
+        profile_button = tk.Button(
+            frame,
+            text="🧑",  # Emoji for Profile
+            font=("Arial", 14),
+            command=show_profile_button_logic,  # Navigate to Profile Form
+            bg=current_theme["button_bg"],
+            fg=current_theme["button_fg"],
+            relief="flat",
+            bd=0,
+        )
+        profile_button.place(x=10, y=10)  # Position at upper-left corner
+    else:
+        # Login and Create Account Buttons for Non-Logged-in Users
+        create_rounded_button(frame, localized_text.get("login", "Login 🔑"), show_login_menu, row=2)
+        create_rounded_button(frame, localized_text.get("create_account", "Create Account 📝"), show_create_account_menu, row=3)
+
+    # Add the Language Toggle Button
+    create_rounded_button(frame, localized_text.get("change_lang", "Change Language 🌐"), toggle_language, row=6)
+
+    # Add Theme Toggle Button at Bottom Left
+    create_toggle_theme_switch(frame, row=7, refresh_function=show_main_menu)
+
+
+def create_toggle_theme_switch(parent, row, refresh_function):
+    """
+    Create a theme toggle button on the specified parent frame.
+    """
+    frame_switch = tk.Frame(parent, bg=current_theme["bg"])
+    frame_switch.grid(row=row, column=0, columnspan=2, pady=10, sticky="nsew")
+    
+    toggle_button = tk.Button(
+        frame_switch,
+        text="🌞" if current_theme == THEMES["Light"] else "🌙",
+        font=("Arial", 10, "bold"),
+        command=lambda: toggle_theme(refresh_function),
+        bg=current_theme["button_bg"],
+        fg=current_theme["button_fg"],
+        relief="flat",
+        bd=0,
+        padx=10,
+        pady=5,
+    )
+    toggle_button.grid(sticky="nsew")
+     
+def show_departments():
+    """
+    Display departments and their respective doctors in the patient menu.
+    """
+    reset_frame()
+
+    # Create a scrollable view
+    canvas = tk.Canvas(frame, bg=current_theme["bg"])
+    canvas.grid(row=0, column=0, sticky="nsew", rowspan=5)
+    scrollbar = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    content_frame = tk.Frame(canvas, bg=current_theme["bg"])
+    canvas.create_window((0, 0), window=content_frame, anchor="nw")
+
+    # Display header
+    tk.Label(
+        content_frame,
+        text="Departments",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=3, pady=20, padx=20, sticky="nsew")
+
+    row = 1
+    for department, doctors in DEPARTMENTS.items():
+        # Display department name
+        tk.Label(
+            content_frame,
+            text=department,
+            font=("Arial", 18, "bold"),
+            bg=current_theme["bg"],
+            fg=current_theme["fg"],
+        ).grid(row=row, column=0, columnspan=3, pady=10, sticky="nsew")
+        row += 1
+
+        for doctor in doctors:
+            # Validate the doctor data structure
+            doctor_name = doctor.get("name", "Unknown")
+            timing = doctor.get("timing", "Not Set")
+            available = doctor.get("available", False)
+
+            doctor_info = f"Dr. {doctor_name} - {timing} {'(Available)' if available else '(Not Available)'}"
+            tk.Label(
+                content_frame,
+                text=doctor_info,
+                bg=current_theme["bg"],
+                fg=current_theme["fg"],
+                anchor="center",
+            ).grid(row=row, column=0, padx=20, pady=5, sticky="nsew")
+
+            # Add "Book Appointment" button for available doctors
+            if available:
+                tk.Button(
+                    content_frame,
+                    text="Book",
+                    font=("Arial", 12),
+                    bg="#4CAF50",
+                    fg="#ffffff",
+                    command=lambda d=doctor_name, dep=department: book_appointment(dep, d),
+                ).grid(row=row, column=1, padx=10, pady=5, sticky="nsew")
+
+            # Add "View Profile" button
+            tk.Button(
+                content_frame,
+                text="View Profile",
+                font=("Arial", 12),
+                bg="#1e90ff",
+                fg="#ffffff",
+                command=lambda name=doctor["name"]: view_doctor_profile(name, show_departments),
+            ).grid(row=row, column=2, padx=10, pady=5, sticky="nsew")
+
+            row += 1
+
+    # Update scroll region
+    content_frame.update_idletasks()
+    canvas.config(scrollregion=canvas.bbox("all"))
+
+    # Back button
+    create_rounded_button(content_frame, "Back 🔙", show_main_menu, bg_color="#ff4500", row=row)
+
+
+def show_login_menu():
+    reset_frame()  # Reset frame and grid configurations
+
+    tk.Label(
+        frame,
+        text="Login",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # Center-align username label and entry
+    tk.Label(
+        frame,
+        text="Enter Username:",
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+        font=("Arial", 14)
+    ).grid(row=1, column=0, padx=20, pady=5, sticky="e")
+
+    username_entry = tk.Entry(frame, font=("Arial", 14))
+    username_entry.grid(row=1, column=1, pady=5, padx=20, sticky="w")
+
+    # Center-align password label and entry
+    tk.Label(
+        frame,
+        text="Enter Password:",
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+        font=("Arial", 14)
+    ).grid(row=2, column=0, padx=20, pady=5, sticky="e")
+
+    password_entry = tk.Entry(frame, font=("Arial", 14), show="*")
+    password_entry.grid(row=2, column=1, pady=5, padx=20, sticky="w")
+
+    # Message label to display errors or success messages
+    message_label = tk.Label(frame, text="", font=("Arial", 12, "bold"), bg=current_theme["bg"], fg=current_theme["fg"])
+    message_label.grid(row=5, column=0, columnspan=2, pady=10, sticky="n")
+
+    def handle_login():
+        """
+        Handle login for both admin and doctors.
+        """
+        username = username_entry.get().strip()
+        password = password_entry.get().strip()
+        hashed_password = hash_password(password)
+
+        if username in users and users[username]["password"] == hashed_password:
+            global current_user
+            current_user = username
+            role = users[username].get("role", "patient")  # Default to "patient" if no role specified
+
+            message_label.config(text="Login Successful!", fg="green")
+            frame.after(1500, show_admin_panel if role == "admin" else show_main_menu)
+            return
+
+        # Check if the user is a doctor
+        global current_department
+        for department, doctors in DEPARTMENTS.items():
+            for doctor in doctors:
+                if doctor.get("name") == username and doctor.get("password") == hashed_password:
+                    current_user = username
+                    current_department = department
+                    print(f"DEBUG: Logged in as doctor: {current_user}, Department: {current_department}")
+                    message_label.config(text="Login Successful!", fg="green")
+                    frame.after(1500, show_doctor_dashboard)
+                    return
+
+        # If login fails, show error message
+        message_label.config(text="Incorrect Username or Password!", fg="red")
+
+    # Add the Login button and center-align
+    create_rounded_button(frame, "Login 🔑", handle_login, row=3).grid(row=3, column=0, columnspan=2, pady=10)
+
+    # Add the Back button and center-align
+    create_rounded_button(frame, "Back 🔙", show_main_menu, bg_color="#ff4500", row=4).grid(row=4, column=0, columnspan=2, pady=10)
+
+
+def show_create_account_menu():
+    reset_frame()
+    tk.Label(
+        frame,
+        text="Create Account",
+        font=("Arial", 24, "bold"),
+        bg=current_theme["bg"],
+        fg=current_theme["header_fg"],
+    ).grid(row=0, column=0, columnspan=2, pady=20, padx=20, sticky="nsew")
+
+    # Center-align username label and entry
+    tk.Label(
+        frame,
+        text="Enter Username:",
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+        font=("Arial", 14)
+    ).grid(row=1, column=0, padx=20, pady=5, sticky="e")
+
+    username_entry = tk.Entry(frame, font=("Arial", 14))
+    username_entry.grid(row=1, column=1, pady=5, padx=20, sticky="w")
+
+    # Center-align password label and entry
+    tk.Label(
+        frame,
+        text="Enter Password:",
+        bg=current_theme["bg"],
+        fg=current_theme["fg"],
+        font=("Arial", 14)
+    ).grid(row=2, column=0, padx=20, pady=5, sticky="e")
+
+    password_entry = tk.Entry(frame, font=("Arial", 14), show="*")
+    password_entry.grid(row=2, column=1, pady=5, padx=20, sticky="w")
+
+    # Message label to display success or error messages
+    message_label = tk.Label(frame, text="", font=("Arial", 12, "bold"), bg=current_theme["bg"], fg=current_theme["fg"])
+    message_label.grid(row=5, column=0, columnspan=2, pady=10, sticky="n")
+
+    def handle_create_account():
+        username = username_entry.get().strip()
+        password = password_entry.get().strip()
+
+        if not username or not password:
+            message_label.config(text="All fields are required!", fg="red")
+            return
+
+        if username in users:
+            message_label.config(text="Username already exists!", fg="red")
+            return
+
+        users[username] = {"password": hash_password(password)}
+        save_users(users)
+        message_label.config(text="Account created successfully!", fg="green")
+
+        # Automatically navigate back to the main menu after 1.5 seconds
+        frame.after(1500, show_main_menu)
+
+    # Center-align Create Account button
+    create_rounded_button(frame, "Create Account 📝", handle_create_account, row=3, bg_color="#32cd32").grid(
+        row=3, column=0, columnspan=2, pady=10
+    )
+
+    # Center-align Back button
+    create_rounded_button(frame, "Back 🔙", show_main_menu, bg_color="#ff4500", row=4).grid(
+        row=4, column=0, columnspan=2, pady=10
+    )
+
+
+def handle_logout():
+    global current_user
+    current_user = None
+    show_main_menu()
+
+# Initialize root window
+root = tk.Tk()
+root.title("Hospital Management System")
+root.geometry("800x600")
+
+# Configure grid for resizing
+root.grid_rowconfigure(0, weight=1)
+root.grid_columnconfigure(0, weight=1)
+
+frame = tk.Frame(root, bg=current_theme["bg"])
+frame.grid(row=0, column=0, sticky="nsew")
+
+# Show the main menu
+show_main_menu()
+
+# Start the Tkinter main loop
+root.mainloop()
